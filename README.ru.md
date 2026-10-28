@@ -92,6 +92,17 @@ Python считает `if`, `elif`, `for`, `while`, `except`, каждый case 
 
 Требования к C# / .NET solution: [docs/csharp-project.ru.md](docs/csharp-project.ru.md).
 
+## Сборка без Python (Windows)
+
+Один файл **`crapper.exe`** (PyInstaller): не нужен Python на машине, где вы гоняете метрики.
+
+```powershell
+.\scripts\build-standalone.ps1
+# → dist\crapper.exe
+```
+
+Готовые сборки: GitHub Actions **standalone-windows** (artifact) или release по тегу `v*`. Общая памятка по трём компаньонам: [Noodle-cpp/ub — docs/STANDALONE.ru.md](https://github.com/Noodle-cpp/ub/blob/master/docs/STANDALONE.ru.md).
+
 ## Разработка
 
 ```bash
