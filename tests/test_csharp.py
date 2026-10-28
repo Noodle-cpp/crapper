@@ -162,4 +162,5 @@ def test_discover_skips_generated_and_test_csharp():
     assert language_of("Board.cs") == "csharp"
     assert is_generated_source("Form.Designer.cs")
     assert is_test_file("BoardTests.cs")
+    assert is_test_file("My.App.Tests/GlpiTestHttp.cs")
     assert not is_test_file("BoardTestHelper.cs")

@@ -72,6 +72,12 @@ CS_GENERATED_SUFFIXES = (
     ".generated.cs",
 )
 CS_TEST_SUFFIXES = ("Tests.cs", "Test.cs")
+CS_TEST_DIR_SUFFIXES = (".tests", ".integrationtests", ".testutils")
+
+
+def _cs_test_tree_dir(name: str) -> bool:
+    lower = name.lower()
+    return any(lower.endswith(suffix) for suffix in CS_TEST_DIR_SUFFIXES)
 
 
 def is_generated_source(path: str | Path) -> bool:
@@ -105,6 +111,8 @@ def is_test_file(path: str | Path) -> bool:
         return True
     if name.endswith(CS_TEST_SUFFIXES):
         return True
+    if any(_cs_test_tree_dir(part) for part in file_path.parts):
+        return True
     return any(part in TEST_DIRS for part in file_path.parts)
 
 
@@ -116,7 +124,11 @@ def _walk(root: Path) -> list[Path]:
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [
-            name for name in dirnames if name not in SKIP_DIRS and name not in TEST_DIRS
+            name
+            for name in dirnames
+            if name not in SKIP_DIRS
+            and name not in TEST_DIRS
+            and not _cs_test_tree_dir(name)
         ]
         for name in filenames:
             path = Path(dirpath) / name
