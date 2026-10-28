@@ -5,6 +5,7 @@ from crapper.languages import functions_in_file
 _SOURCES = [
     ("clojure", "(defn choose [x] x)\n", "src/demo/core.clj", "choose"),
     ("java", "class Board { void place() { if (true) return; } }\n", "Board.java", "place"),
+    ("csharp", "class Board { void Place() { if (true) return; } }\n", "Board.cs", "Place"),
     ("go", "package demo\nfunc Place() int { return 1 }\n", "board.go", "Place"),
     ("typescript", "export function view() { return 1 }\n", "src/ui.ts", "view"),
     ("python", "def run():\n    return 1\n", "src/app.py", "run"),

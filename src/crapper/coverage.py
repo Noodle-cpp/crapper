@@ -1,7 +1,8 @@
-"""Load Cloverage, LCOV, JaCoCo, and Go coverage profiles.
+"""Load Cloverage, LCOV, JaCoCo, Cobertura, and Go coverage profiles.
 
 Clojure prefers Cloverage's per-line form counts, then LCOV. Java uses JaCoCo
-instruction counters. Go uses statement profiles. LCOV scores a function by
+instruction counters. C# uses Coverlet Cobertura line hits on each method.
+Go uses statement profiles. LCOV scores a function by
 its BRDA branch records when it has any, and by line hits otherwise.
 `percent_for` returns None when the file is absent; analysis turns that into 0%.
 """
@@ -418,11 +419,89 @@ def parse_jacoco_index(text: str) -> dict[str, list[JacocoMethod]]:
     return found
 
 
+def _method_line_number(method) -> int:
+    try:
+        return int(method.get("line") or "0")
+    except ValueError:
+        return 0
+
+
+def _record_cobertura_method(
+    found: dict[str, list[JacocoMethod]], class_name: str, method
+) -> None:
+    if method.tag != "method":
+        return
+    name = method.get("name", "")
+    if not name:
+        return
+    covered = 0
+    missed = 0
+    lines = method.find("lines")
+    if lines is not None:
+        for line in lines.findall("line"):
+            hits = int(line.get("hits") or "0")
+            if hits > 0:
+                covered += 1
+            else:
+                missed += 1
+    elif method.get("line-rate") is not None:
+        rate = float(method.get("line-rate") or "0")
+        covered = int(round(rate * 1000))
+        missed = 1000 - covered
+    if covered + missed == 0:
+        return
+    key = f"{class_name}#{name}"
+    found.setdefault(key, []).append(
+        JacocoMethod(
+            missed=missed,
+            covered=covered,
+            line=_method_line_number(method),
+        )
+    )
+
+
+def parse_cobertura_index(text: str) -> dict[str, list[JacocoMethod]]:
+    """Key methods as `Namespace.Type#Method`, nested types use `+`."""
+
+    cleaned = _DOCTYPE.sub("", text)
+    root = ET.fromstring(cleaned)
+    found: dict[str, list[JacocoMethod]] = {}
+    for class_node in root.iter("class"):
+        class_name = class_node.get("name", "").replace("/", ".")
+        methods = class_node.find("methods")
+        if methods is None:
+            continue
+        for method in methods.findall("method"):
+            _record_cobertura_method(found, class_name, method)
+    return found
+
+
+def _csharp_class_names(function: Function) -> list[str]:
+    names: list[str] = []
+    if function.jacoco_class:
+        names.append(function.jacoco_class)
+    if function.namespace and function.namespace not in names:
+        names.append(function.namespace)
+    if function.namespace and "." in function.namespace:
+        head, tail = function.namespace.rsplit(".", 1)
+        plus = f"{head}+{tail}"
+        if plus not in names:
+            names.append(plus)
+    return names
+
+
+def _method_coverage_from_index(
+    index: dict[str, list[JacocoMethod]], class_names: list[str], method_name: str, line: int
+) -> float | None:
+    return _jacoco_from_index(index, class_names, method_name, line)
+
+
 @dataclass
 class CoverageBundle:
     lcov: dict[str, dict[int, tuple[int, int]]] = field(default_factory=dict)
     go_profile: dict[str, list[tuple[int, int, int, int]]] | None = None
     jacoco: dict[str, list[JacocoMethod]] | None = None
+    cobertura: dict[str, list[JacocoMethod]] | None = None
     form_html: dict[str, dict[int, tuple[int, int]]] = field(default_factory=dict)
     source_parts: list[tuple[str, ...]] = field(default_factory=list)
 
@@ -446,8 +525,15 @@ class CoverageBundle:
                 names.append(function.jacoco_class)
             if function.namespace not in names:
                 names.append(function.namespace)
-            return _jacoco_from_index(
+            return _method_coverage_from_index(
                 self.jacoco or {}, names, function.name, function.start_line
+            )
+        if function.language == "csharp":
+            return _method_coverage_from_index(
+                self.cobertura or {},
+                _csharp_class_names(function),
+                function.name,
+                function.start_line,
             )
         if function.language == "go":
             return go_percent(
@@ -543,6 +629,21 @@ def _merge_jacoco(root: Path) -> dict[str, list[JacocoMethod]]:
     return merged
 
 
+def _cobertura_paths(root: Path) -> list[Path]:
+    paths = list(root.glob("target/coverage/csharp/**/coverage.cobertura.xml"))
+    paths.extend(root.glob("target/coverage/**/coverage.cobertura.xml"))
+    paths.extend(root.glob("**/TestResults/**/coverage.cobertura.xml"))
+    return paths
+
+
+def _merge_cobertura(root: Path) -> dict[str, list[JacocoMethod]]:
+    merged: dict[str, list[JacocoMethod]] = {}
+    for text in _merge_texts(_cobertura_paths(root)):
+        for key, methods in parse_cobertura_index(text).items():
+            merged.setdefault(key, []).extend(methods)
+    return merged
+
+
 def _merge_forms(root: Path) -> dict[str, dict[int, tuple[int, int]]]:
     coverage_dir = root / "target" / "coverage"
     found: dict[str, dict[int, tuple[int, int]]] = {}
@@ -561,9 +662,11 @@ def _merge_forms(root: Path) -> dict[str, dict[int, tuple[int, int]]]:
 def load_bundle(root: Path) -> CoverageBundle:
     go_profile = _merge_go(root)
     jacoco = _merge_jacoco(root)
+    cobertura = _merge_cobertura(root)
     return CoverageBundle(
         lcov=_merge_lcov(root),
         go_profile=go_profile or None,
         jacoco=jacoco or None,
+        cobertura=cobertura or None,
         form_html=_merge_forms(root),
     )

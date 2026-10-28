@@ -9,6 +9,7 @@ EXTENSIONS = {
     ".cljs": "clojure",
     ".bb": "clojure",
     ".java": "java",
+    ".cs": "csharp",
     ".go": "go",
     ".ts": "typescript",
     ".tsx": "typescript",
@@ -65,6 +66,21 @@ JS_TEST_SUFFIXES = (
     ".spec.cjs",
 )
 
+CS_GENERATED_SUFFIXES = (
+    ".Designer.cs",
+    ".g.cs",
+    ".generated.cs",
+)
+CS_TEST_SUFFIXES = ("Tests.cs", "Test.cs")
+
+
+def is_generated_source(path: str | Path) -> bool:
+    file_path = Path(path)
+    if file_path.suffix.lower() != ".cs":
+        return False
+    name = file_path.name
+    return any(name.endswith(suffix) for suffix in CS_GENERATED_SUFFIXES)
+
 
 def language_of(path: str | Path) -> str | None:
     file_path = Path(path)
@@ -87,6 +103,8 @@ def is_test_file(path: str | Path) -> bool:
         return True
     if name.endswith("_test.py") or (name.startswith("test_") and name.endswith(".py")):
         return True
+    if name.endswith(CS_TEST_SUFFIXES):
+        return True
     return any(part in TEST_DIRS for part in file_path.parts)
 
 
@@ -102,7 +120,7 @@ def _walk(root: Path) -> list[Path]:
         ]
         for name in filenames:
             path = Path(dirpath) / name
-            if language_of(path) is None or is_test_file(path):
+            if language_of(path) is None or is_test_file(path) or is_generated_source(path):
                 continue
             found.append(path)
     return found

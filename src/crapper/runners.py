@@ -7,6 +7,7 @@ tool, or a failed run, scores its functions at 0%.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -427,6 +428,91 @@ def _modules_with(files: list[Path], suffix: str, marker: str, root: Path) -> li
     return sorted(modules)
 
 
+def _csharp_modules(root: Path, files: list[Path]) -> list[Path]:
+    modules: set[Path] = set()
+    stop = root.resolve()
+    for file in files:
+        path = Path(file)
+        if path.suffix != ".cs":
+            continue
+        current = path.parent if path.is_file() else path
+        while True:
+            if any(current.glob("*.csproj")):
+                modules.add(current.resolve())
+                break
+            if current == stop or current.parent == current:
+                break
+            current = current.parent
+    return sorted(modules)
+
+
+_PROJECT_REFERENCE = re.compile(r'<ProjectReference\s+Include="([^"]+)"', re.IGNORECASE)
+
+
+def _artifact_path(path: Path) -> bool:
+    return "bin" in path.parts or "obj" in path.parts
+
+
+def _project_references(csproj: Path) -> set[Path]:
+    text = csproj.read_text(encoding="utf-8", errors="replace")
+    found: set[Path] = set()
+    for match in _PROJECT_REFERENCE.finditer(text):
+        target = (csproj.parent / match.group(1).replace("\\", "/")).resolve()
+        found.add(target)
+    return found
+
+
+def _csharp_production_csprojs(root: Path, files: list[Path]) -> set[Path]:
+    projects: set[Path] = set()
+    for module in _csharp_modules(root, files):
+        csproj = _csproj_for(module)
+        if csproj is not None:
+            projects.add(csproj.resolve())
+    return projects
+
+
+def _looks_like_test_csproj(csproj: Path) -> bool:
+    name = csproj.name
+    if name.endswith("Tests.csproj") or name.endswith(".Tests.csproj"):
+        return True
+    if name.endswith("Test.csproj") and not name.endswith("Tests.csproj"):
+        return True
+    text = csproj.read_text(encoding="utf-8", errors="replace")
+    return "<IsTestProject>true</IsTestProject>" in text
+
+
+def _iter_csproj_files(root: Path) -> list[Path]:
+    return [
+        path
+        for path in root.rglob("*.csproj")
+        if not _artifact_path(path) and path.is_file()
+    ]
+
+
+def _csharp_test_csprojs(root: Path, production: set[Path]) -> list[Path]:
+    if not production:
+        return []
+    tests: list[Path] = []
+    for csproj in _iter_csproj_files(root.resolve()):
+        if not _looks_like_test_csproj(csproj):
+            continue
+        if _project_references(csproj) & production:
+            tests.append(csproj.resolve())
+    return sorted(set(tests))
+
+
+def _csharp_coverage_csprojs(root: Path, files: list[Path]) -> list[Path]:
+    """Test projects that reference analyzed libraries, else the libraries themselves."""
+
+    production = _csharp_production_csprojs(root, files)
+    if not production:
+        return []
+    tests = _csharp_test_csprojs(root, production)
+    if tests:
+        return tests
+    return sorted(production)
+
+
 def _cover_clojure(root: Path) -> None:
     if not (root / "deps.edn").is_file() and not (root / "bb.edn").is_file():
         _warn("No deps.edn or bb.edn; skipping Clojure coverage.")
@@ -562,6 +648,67 @@ def _cover_rust(root: Path, files: list[Path]) -> None:
             _warn(f"Rust coverage exited {code} in {module}. Rust coverage will score 0%.")
 
 
+def _csharp_coverage_report(root: Path, module: Path) -> Path:
+    root = root.resolve()
+    module = module.resolve()
+    if module == root:
+        return root / "target" / "coverage" / "csharp" / "coverage.cobertura.xml"
+    slug = module.relative_to(root).as_posix().replace("/", "__")
+    return root / "target" / "coverage" / "csharp" / slug / "coverage.cobertura.xml"
+
+
+def _csharp_coverage_report_for_csproj(root: Path, csproj: Path) -> Path:
+    return _csharp_coverage_report(root, csproj.parent)
+
+
+def _csproj_for(module: Path) -> Path | None:
+    projects = sorted(module.glob("*.csproj"))
+    if not projects:
+        return None
+    return projects[0]
+
+
+def _stage_cobertura_report(report: Path) -> None:
+    """Copy the newest Cobertura file under the report directory onto `report`."""
+
+    if not report.parent.is_dir():
+        return
+    found = list(report.parent.rglob("coverage.cobertura.xml"))
+    if not found:
+        return
+    latest = max(found, key=lambda path: path.stat().st_mtime)
+    if latest.resolve() != report.resolve():
+        report.write_bytes(latest.read_bytes())
+
+
+def _cover_csharp(root: Path, files: list[Path]) -> None:
+    if not shutil.which("dotnet"):
+        _warn("dotnet is not on PATH; skipping C# coverage.")
+        return
+    csprojs = _csharp_coverage_csprojs(root, files)
+    if not csprojs:
+        _warn("No .csproj; skipping C# coverage.")
+        return
+    for csproj in csprojs:
+        module = csproj.parent
+        report = _csharp_coverage_report_for_csproj(root, csproj)
+        _prepare_report(report)
+        results = report.parent / "TestResults"
+        code = run_shell(
+            [
+                "dotnet",
+                "test",
+                str(csproj.resolve()),
+                "--collect:XPlat Code Coverage",
+                f"--results-directory={results.resolve()}",
+            ],
+            module,
+        )
+        _stage_cobertura_report(report)
+        if code != 0:
+            _warn(f"C# coverage exited {code} for {csproj.name}. C# coverage will score 0%.")
+
+
 def run_coverage(root: Path, files: list[Path], command: str | None) -> int:
     """Generate coverage reports for the languages present in `files`.
 
@@ -593,4 +740,6 @@ def run_coverage(root: Path, files: list[Path], command: str | None) -> int:
         _cover_python(root, files)
     if "rust" in languages:
         _cover_rust(root, files)
+    if "csharp" in languages:
+        _cover_csharp(root, files)
     return 0

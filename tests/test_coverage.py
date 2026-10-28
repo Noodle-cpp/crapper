@@ -2,6 +2,7 @@ from crapper.coverage import (
     CoverageBundle,
     go_percent,
     load_bundle,
+    parse_cobertura_index,
     parse_form_coverage,
     parse_go_profile,
     parse_jacoco_index,
@@ -112,6 +113,59 @@ def test_jacoco_instruction_coverage_joins_on_class_and_method():
     assert bundle.percent_for(inner) == 100.0
 
 
+def test_cobertura_line_coverage_joins_on_class_and_method():
+    xml = """<?xml version="1.0"?>
+    <coverage line-rate="1" branch-rate="1" version="1.9">
+      <packages>
+        <package name="demo.pkg" line-rate="1" branch-rate="1">
+          <classes>
+            <class name="demo.pkg.Board" filename="Board.cs" line-rate="0.75">
+              <methods>
+                <method name="Place" signature="(System.Int32)" line-rate="0.75" line="10">
+                  <lines>
+                    <line number="10" hits="1" branch="false"/>
+                    <line number="11" hits="0" branch="false"/>
+                    <line number="12" hits="1" branch="false"/>
+                    <line number="13" hits="1" branch="false"/>
+                  </lines>
+                </method>
+              </methods>
+            </class>
+            <class name="demo.pkg.Board+Inner" filename="Board.cs" line-rate="1">
+              <methods>
+                <method name="Tick" signature="()" line-rate="1" line="20">
+                  <lines>
+                    <line number="20" hits="1" branch="false"/>
+                  </lines>
+                </method>
+              </methods>
+            </class>
+          </classes>
+        </package>
+      </packages>
+    </coverage>
+    """
+    bundle = CoverageBundle(cobertura=parse_cobertura_index(xml))
+    outer = function(
+        name="Place",
+        namespace="demo.pkg.Board",
+        language="csharp",
+        jacoco_class="demo.pkg.Board",
+        start_line=10,
+        path="src/Board.cs",
+    )
+    inner = function(
+        name="Tick",
+        namespace="demo.pkg.Board.Inner",
+        language="csharp",
+        jacoco_class="demo.pkg.Board+Inner",
+        start_line=20,
+        path="src/Board.cs",
+    )
+    assert bundle.percent_for(outer) == 75.0
+    assert bundle.percent_for(inner) == 100.0
+
+
 def test_jacoco_skips_methods_without_an_instruction_counter():
     xml = """<report>
       <class name="demo/pkg/Board">
@@ -154,7 +208,19 @@ def test_load_bundle_merges_each_report(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "target" / "coverage" / "index.html").write_text("<html></html>", encoding="utf-8")
+    cobertura = tmp_path / "target" / "coverage" / "csharp" / "coverage.cobertura.xml"
+    cobertura.parent.mkdir(parents=True)
+    cobertura.write_text(
+        '<coverage><packages><package><classes>'
+        '<class name="demo.App"><methods>'
+        '<method name="Run" line="2"><lines>'
+        '<line number="2" hits="1" branch="false"/>'
+        "</lines></method></methods></class>"
+        "</classes></package></packages></coverage>",
+        encoding="utf-8",
+    )
     bundle = load_bundle(tmp_path)
     assert bundle.percent_for(function(start_line=3, end_line=4)) == 50.0
     assert bundle.go_profile is not None
     assert bundle.jacoco is not None
+    assert bundle.cobertura is not None

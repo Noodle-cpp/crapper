@@ -2,7 +2,7 @@
 
 > [Русская документация](README.ru.md)
 
-CRAP scores for Clojure, Java, Go, TypeScript, Rust, and Python. One run detects the language of each source file, applies that language's complexity and coverage rules, and writes the snapshot [uml-viewer](https://github.com/unclebob/uml-viewer) already reads.
+CRAP scores for Clojure, Java, C#, Go, TypeScript, Rust, and Python. One run detects the language of each source file, applies that language's complexity and coverage rules, and writes the snapshot [uml-viewer](https://github.com/unclebob/uml-viewer) already reads.
 
 The formula is the one from [crap4clj](https://github.com/unclebob/crap4clj), [crap4java](https://github.com/unclebob/crap4java), and [crap4go](https://github.com/unclebob/crap4go):
 
@@ -50,6 +50,7 @@ uml-viewer groups entries by `:namespace` and joins each operation on `:name`. `
 | --- | --- | --- |
 | Clojure | the `ns` | the `defn` / `defn-` name |
 | Java | `package.Class`, or `package.Outer.Inner` | the method name |
+| C# | `namespace.Type`, or `namespace.Outer.Inner` | the method name |
 | Go | the package import path, or `import/path.Receiver` | the function or method name |
 | TypeScript | the dotted module path, or `module.Class` | the function or method name |
 | Rust | `crate::module`, or `crate::module::Type` | the function or method name |
@@ -62,6 +63,8 @@ Rename or move is a new entry. There is no identity matching across runs.
 Clojure follows crap4clj: `if` / `when` and their variants, `and`, `or`, `loop`, `catch`, and each clause of `cond`, `condp`, `case`, `cond->`, `cond->>`, `some->`, and `some->>`. Coverage prefers Cloverage's per-line form counts and falls back to LCOV.
 
 Java follows crap4java: `if`, loops, `catch`, `?:`, each `switch` label, and `&&` / `||`. Constructors and methods inside anonymous classes are omitted. Coverage is JaCoCo's `INSTRUCTION` counter.
+
+C# follows the same structural decisions as Java, plus `??` and `?.`. Constructors, property accessors, and methods inside lambdas or local functions are omitted. Nested types use `namespace.Outer.Inner` in the snapshot and `namespace.Outer+Inner` in Cobertura. Expression-bodied methods are scored. Coverage is Coverlet Cobertura via `dotnet test` on test projects that reference the analyzed `.csproj` files (`*Tests.csproj` or `<IsTestProject>true</IsTestProject>`); when none match, the libraries themselves are tested.
 
 Go follows crap4go: `if`, `for`, `range`, each `switch` and `select` clause, and `&&` / `||`. Coverage is `go test -coverprofile`.
 
@@ -83,8 +86,11 @@ By default a run deletes the previous report for each language it is about to me
 | TypeScript | `npm run coverage`, or Vitest `--coverage`, or `npx c8 ... npm test` | `coverage/lcov.info` or `target/coverage/typescript/lcov.info` |
 | Rust | `cargo llvm-cov` or `cargo tarpaulin`, per Cargo package | `target/coverage/rust/lcov.info` |
 | Python | `coverage run` with pytest or unittest, then `coverage lcov` | `target/coverage/python/lcov.info` |
+| C# | `dotnet test` with XPlat Code Coverage on test projects (`*Tests.csproj`, `IsTestProject`, or `ProjectReference` to analyzed libraries) | `target/coverage/csharp/**/coverage.cobertura.xml` |
 
 A missing tool or a failed test run scores that language at 0% and still writes the snapshot. Pass `--coverage-command` to replace those defaults with one command of your own. `--no-coverage` is the run that leaves coverage and CRAP as N/A.
+
+C# / .NET project layout: [docs/csharp-project.md](docs/csharp-project.md).
 
 ## Development
 

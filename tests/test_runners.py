@@ -236,6 +236,8 @@ def test_coverage_commands_are_issued_per_language(tmp_path, monkeypatch):
             return 1
         if text.startswith("clj") or text.startswith("mvn") or text.startswith("go "):
             return 1
+        if text.startswith("dotnet "):
+            return 1
         if "vitest" in text or text.startswith("cargo "):
             return 1
         return 0
@@ -243,7 +245,10 @@ def test_coverage_commands_are_issued_per_language(tmp_path, monkeypatch):
     monkeypatch.setattr("crapper.runners.run_shell", shell)
     monkeypatch.setattr(
         "crapper.runners.shutil.which",
-        lambda name: "/bin/cargo-llvm-cov" if name == "cargo-llvm-cov" else None,
+        lambda name: {
+            "cargo-llvm-cov": "/bin/cargo-llvm-cov",
+            "dotnet": "/bin/dotnet",
+        }.get(name),
     )
     _write(tmp_path, "deps.edn", "{}\n")
     _write(tmp_path, "src/demo/core.clj", "(ns demo.core)\n(defn x [])\n")
@@ -263,6 +268,8 @@ def test_coverage_commands_are_issued_per_language(tmp_path, monkeypatch):
     _write(tmp_path, "src/app.py", "def run():\n    return 1\n")
     _write(tmp_path, "Cargo.toml", '[package]\nname = "demo"\nversion = "0.1.0"\n')
     _write(tmp_path, "src/lib.rs", "pub fn open() {}\n")
+    _write(tmp_path, "App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n")
+    _write(tmp_path, "App.cs", "class App { void Run() {} }\n")
     files = [
         tmp_path / "src/demo/core.clj",
         tmp_path / "src/Board.java",
@@ -270,6 +277,7 @@ def test_coverage_commands_are_issued_per_language(tmp_path, monkeypatch):
         tmp_path / "src/ui.ts",
         tmp_path / "src/app.py",
         tmp_path / "src/lib.rs",
+        tmp_path / "App.cs",
     ]
     run_coverage(tmp_path, files, None)
     text = "\n".join(_as_text(command) for command in commands)
@@ -280,6 +288,7 @@ def test_coverage_commands_are_issued_per_language(tmp_path, monkeypatch):
     assert "vitest" in text
     assert "coverage run" in text
     assert "cargo llvm-cov" in text
+    assert "dotnet test" in text
     run_coverage(tmp_path, files, "echo custom")
     assert commands[-1] == "echo custom"
 
@@ -293,6 +302,54 @@ def test_missing_build_files_skip_that_language(tmp_path, monkeypatch):
         _write(tmp_path, "src/lib.rs", "pub fn open() {}\n"),
     ]
     run_coverage(tmp_path, files, None)
+
+
+def test_csharp_coverage_prefers_test_csproj(tmp_path, monkeypatch):
+    commands: list[tuple[list[str] | str, Path]] = []
+
+    def shell(command, cwd):
+        commands.append((command, cwd))
+        return 1 if _as_text(command).startswith("dotnet ") else 0
+
+    monkeypatch.setattr("crapper.runners.run_shell", shell)
+    monkeypatch.setattr(
+        "crapper.runners.shutil.which",
+        lambda name: "/bin/dotnet" if name == "dotnet" else None,
+    )
+    lib = tmp_path / "src" / "App"
+    lib.mkdir(parents=True)
+    _write(
+        lib,
+        "App.csproj",
+        '<Project Sdk="Microsoft.NET.Sdk">'
+        "<PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n",
+    )
+    _write(lib, "App.cs", "namespace App { public class Board { public void Run() {} } }\n")
+    tests = tmp_path / "App.Tests"
+    tests.mkdir()
+    _write(
+        tests,
+        "App.Tests.csproj",
+        '<Project Sdk="Microsoft.NET.Sdk">'
+        "<PropertyGroup><TargetFramework>net8.0</TargetFramework>"
+        "<IsTestProject>true</IsTestProject></PropertyGroup>"
+        '<ItemGroup><ProjectReference Include="..\\src\\App\\App.csproj" />'
+        "</ItemGroup></Project>\n",
+    )
+    _write(tests, "BoardTests.cs", "class BoardTests {}\n")
+    run_coverage(tmp_path, [lib / "App.cs"], None)
+    dotnet = [_as_text(command) for command, _cwd in commands if _as_text(command).startswith("dotnet test")]
+    assert dotnet == [
+        _as_text(
+            [
+                "dotnet",
+                "test",
+                str((tests / "App.Tests.csproj").resolve()),
+                "--collect:XPlat Code Coverage",
+                f"--results-directory={(tmp_path / 'target' / 'coverage' / 'csharp' / 'App.Tests' / 'TestResults').resolve()}",
+            ]
+        )
+    ]
 
 
 def test_run_shell_returns_the_child_status_and_reports_a_failed_start(tmp_path, monkeypatch, capsys):
