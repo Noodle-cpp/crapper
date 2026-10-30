@@ -128,10 +128,24 @@ def _has_body(node) -> bool:
 
 
 def _method_name(data: bytes, node) -> str | None:
-    ident = child_of_type(node, "identifier")
-    if ident is not None:
-        return node_text(data, ident)
-    return None
+    """The method name, not the return type.
+
+    Both are `identifier` nodes when the return type is a named type.
+    The name is the last identifier before the parameter list.
+    """
+
+    parameters = child_of_type(node, "parameter_list")
+    if parameters is None:
+        return None
+    chosen = None
+    for child in node.children:
+        if child == parameters:
+            break
+        if child.type == "identifier":
+            chosen = child
+    if chosen is None:
+        return None
+    return node_text(data, chosen)
 
 
 def functions_in_source(

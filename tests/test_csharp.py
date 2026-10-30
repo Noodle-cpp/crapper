@@ -158,6 +158,24 @@ def test_keywords_in_comments_and_strings_are_not_decisions():
     assert [(method.name, method.complexity) for method in methods] == [("Stable", 1)]
 
 
+def test_named_return_type_is_not_the_method_name():
+    source = """
+    namespace App {
+        class Jobs {
+            public JobStatus DeriveJobStatus(int value) {
+                if (value == 0) {
+                    return JobStatus.Pending;
+                }
+                return JobStatus.Succeeded;
+            }
+        }
+    }
+    """
+    methods = functions_in_source(source, "Jobs.cs")
+    assert [method.name for method in methods] == ["DeriveJobStatus"]
+    assert methods[0].namespace == "App.Jobs"
+
+
 def test_discover_skips_generated_and_test_csharp():
     assert language_of("Board.cs") == "csharp"
     assert is_generated_source("Form.Designer.cs")
